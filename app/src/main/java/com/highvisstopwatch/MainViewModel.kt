@@ -56,6 +56,11 @@ class MainViewModel : ViewModel() {
                 time -= 1
                 delay(1000)
                 val _time = time
+
+                scopedReduce<State.Running> {
+                    State.Running(_time, initialTime)
+                }
+                /* sample usage of how we can use scopedReduce
                 reduce {
                     if (it is State.Running) {
                         State.Running(_time, initialTime)
@@ -63,27 +68,19 @@ class MainViewModel : ViewModel() {
                         it
                     }
                 }
+                */
             }
 
-            reduce {
-                if (it is State.Running) {
-                    State.Initial(initialTime)
-                } else {
-                    it
-                }
+            scopedReduce<State.Running> {
+                State.Initial(initialTime)
             }
         }
     }
 
     fun pauseTimer() {
-        reduce { state ->
-            (state as? State.Running)?.let { runningState ->
-                _timerJob?.cancel()
-                State.Paused(runningState.timeRemaining, runningState.initialTime)
-            } ?: run {
-                Log.d(TAG, "cannot pause timer as timer wasn't running- $state")
-                throw IllegalStateException("cannot pause timer as timer wasn't running- $state")
-            }
+        scopedReduce<State.Running> { runningState ->
+            _timerJob?.cancel()
+            State.Paused(runningState.timeRemaining, runningState.initialTime)
         }
     }
 
@@ -104,13 +101,8 @@ class MainViewModel : ViewModel() {
     }
 
     fun changeInitialTime(initialTime: Int) {
-        reduce { state ->
-            (state as? State.Initial)?.let { initialState ->
-                State.Initial(initialTime)
-            } ?: run {
-                Log.d(TAG, "cannot set initial time- $state")
-                throw IllegalStateException("cannot set initial time- $state")
-            }
+        scopedReduce<State.Initial> { initialState ->
+            State.Initial(initialTime)
         }
     }
 
@@ -124,6 +116,21 @@ class MainViewModel : ViewModel() {
         viewModelScope.launch(Dispatchers.Default) {
             _stateFlow.update {
                 block(it)
+            }
+        }
+    }
+
+    private fun <T : State> scopedReduce(block: suspend (T) -> State) {
+        viewModelScope.launch(Dispatchers.Default) {
+            _stateFlow.update { state ->
+                runCatching {
+                    (state as T).let {
+                        block(it)
+                    }
+                }.getOrElse {
+                    Log.d(TAG, "scoped reduce failed as $state could not be cast", it)
+                    state
+                }
             }
         }
     }
